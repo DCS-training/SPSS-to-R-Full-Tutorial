@@ -1,0 +1,207 @@
+# Analysis in R
+
+## Running and reporting our analyses
+
+Now that the hard work of preparing our data is complete. We can run our analyses! Today we will perform t-tests to compare the effect of the intervention on depression, anxiety and stress.
+
+From there, we will perform a regression analysis to predict depression scores whilst controlling for exposure to stressful life events, social support, and the intervention.
+
+We will also use this to demonstrate how we can use R to generate our analysis reports. So no more copy and pasting. Just smoooooooth sailing.
+
+Here we will be taking advantage of the `flextable` and `gtsummary` packages to conduct and report our statistics. These package makes it super easy to generate publication ready tables, and it can be rendered into Word documents thorugh R!
+
+For more information on how to use the package, please check out the `flextable` [vignettes](https://ardata-fr.github.io/flextable-book/) and the `gtsummary` [vignettes](https://www.danieldsjoberg.com/gtsummary/articles/tbl_summary.html).
+
+The code might look a little intimidating, but we will walk you through it so that you can also use this for your own analysis.
+
+For each analysis, we will display the raw version and the tidied version. We will also show you how to render your analysis to finish the session.
+
+## Summary Statistics
+
+The code for the summary statistics table has been set to display most of the common descriptive summary statistics. Any columns that are not needed can be deleted manually in the rendered word document (Or by digging into `get_summary_stats()` by looking up the [R documentation](https://www.rdocumentation.org/packages/rstatix/versions/0.7.2/topics/get_summary_stats)). 
+
+
+**NB** If you are running the cell below to generate a report that will contains only the output tables make sure to change `echo=TRUE` in the header of the markdown cell into `echo=FALSE`.
+
+```{r, echo = TRUE, message= FALSE}
+
+table <- df_tidy %>%
+  dplyr::select(stress, anxiety, depression, eventsscore, SOsupport) %>%  # Select relevant columns
+  tbl_summary(
+    type = all_continuous() ~ "continuous",  # Specify that all selected columns are continuous
+    statistic = all_continuous() ~ "{mean} ({sd})",  # Customize the statistics
+    label = list(stress ~ "Stress Score",    # Optional: Customize labels for better readability
+                 anxiety ~ "Anxiety Score",
+                 depression ~ "Depression Score",
+                 eventsscore ~ "Event Score",
+                 SOsupport ~ "Social Support")
+  )
+
+
+as_flex_table(table)  # Converts table to flextable, which makes it prettier and allows for rendering into Word. 
+ 
+
+```
+
+## Cronbach's alphas
+
+This is probably the most complicated part of the worksheet, as it requires using a combination of different functions. However, we have tried to compile the code so that you can copy, paste and adjust to your own needs.
+
+```{r, echo = TRUE, message = FALSE}
+
+# Compiling alphas
+
+## Step 1: compiling subscale variables
+stress_alpha <- df_tidy %>% dplyr::select(dass1, dass6, dass8,
+                                       dass11, dass12, dass14, dass18)
+anxiety_alpha <- df_tidy %>% dplyr::select(dass2, dass4, dass7,
+                                        dass9, dass15, dass19, dass20) 
+depression_alpha <- df_tidy %>% dplyr::select(dass3, dass5, dass10, 
+                                           dass13, dass16, dass17, dass21) 
+
+## Step 2: Running the cronbach.alpha test, and collecting only the score.
+## If the commands below are not working, run `instal.packages("ltm")` in the console first. 
+
+str_alpha_value <- ltm::cronbach.alpha(stress_alpha)[[1]]
+anx_alpha_value <- ltm::cronbach.alpha(anxiety_alpha)[[1]]
+dep_alpha_value <- ltm::cronbach.alpha(depression_alpha)[[1]]
+
+
+## Step 3:Creating Subscale names and cronbach alpha values objects - make sure values align with names
+
+alpha_values <- c(str_alpha_value , anx_alpha_value, dep_alpha_value)
+
+Measure_name <- c("DASS Stress", 
+              "DASS Anxiety",
+              "DASS Depression")
+
+## Step 4: Creating a pretty table
+data.frame(Measure_name, alpha_values) %>% # Choosing our objects from step 3
+  mutate(alpha_values = round(alpha_values, 2)) %>% # Rounding to 2 decimal places
+  dplyr::rename( `Measure` = Measure_name, # Renaming so we can include spaces
+    `Cronbach alpha` = alpha_values ) %>% 
+  flextable() # Using flextable() to make prettier table that renders to word.
+```
+
+## T-test report
+
+### Raw results
+
+```{r, echo=TRUE, message = FALSE}
+t_test(stress ~ group, data = df_tidy)
+```
+
+### Publication ready(er) results
+
+```{r, echo=TRUE, message = FALSE}
+  df_tidy %>%
+  dplyr::select(group, anxiety, stress, depression) %>%
+  tbl_summary(by = group, 
+              missing = "no",
+              statistic = list(all_continuous() ~ "{mean} ({sd})")) %>%
+  add_p(everything() ~ "t.test") %>%
+  modify_header( # header needs to be modified to display test statistc and df 
+    statistic = "**t-statistic**", 
+    parameter = "**df**"
+  )  %>%
+  # add a header to the statistic column, which is hidden by default
+  modify_fmt_fun(c(statistic , parameter) ~ style_sigfig)
+```
+
+## Correlation analysis
+
+### Rough results
+
+```{r, results = "asis", echo = TRUE, message = FALSE}
+
+cor_data <- df_tidy %>% 
+  dplyr::select( anxiety, stress, depression, eventsscore , SOsupport)
+
+# Calculate correlation
+results <- correlation(cor_data)
+
+
+# Capture the summary output
+summary_output <- capture.output(summary(results, redundant = TRUE))
+
+# Wrap the output in markdown code block to avoid header interpretation
+cat("```\n", paste(summary_output, collapse = "\n"), "\n```")
+
+```
+
+### Publication ready(er) results
+
+Please note that the correlation matrix is left with redundant values. This is to allow you to decide if you want to manually display the lower or upper triangle. Also, a bug in the `correlation` package rearranges the display in a displeasing manner when `redundant = FALSE`. But thankfully, we can edit our output to our needs in the rendered word document.
+
+```{r, results = "asis", echo = TRUE, message = FALSE}
+
+ df_tidy %>% dplyr::select( anxiety, stress, depression, eventsscore , SOsupport) %>%
+    rename(`Anxiety` = anxiety ,
+           `Stress` = stress,
+           `Depression` = depression,
+           `Stressful Life Events` =  eventsscore,
+           `Significant Other Support`=  SOsupport) %>% 
+  correlation::correlation() %>% 
+  summary(redundant = TRUE) %>%
+  display()
+
+```
+
+## Regression analysis
+
+```{r, echo = TRUE, message = FALSE}
+# Setting the model
+model <- lm(depression ~ group + eventsscore + SOsupport, df_tidy)
+
+```
+
+### Raw results
+
+```{r, echo = TRUE, message = FALSE}
+# Ugly (but useful) results 
+summary(model)
+
+```
+
+### Publication ready(er) results
+
+I have recently discovered the `flextable` package, and it is amazing! It will convert your model into a publication ready format in word with minimal effort. Simply take your defined model, and wrap it in the `as_flextable()` function. More information on `flextable` can be found [here](https://ardata-fr.github.io/flextable-book/index.html).
+
+```{r, echo = TRUE, message = FALSE}
+# Pretty results 
+model <- tbl_regression(model)
+as_flex_table(model)
+```
+
+### Publication ready plot
+
+And what use is a fancy table without a fancier plot?! APA guidelines are a little hazy when it comes to plot standards, but here is a good estimate. The title, subtitle and caption have been left empty here, as sometimes it is more useful to edit this within word (sometimes...).
+
+```{r, echo = TRUE, message = FALSE}
+#Generating plot
+ plot <- ggplot(df_tidy,
+                aes(x = eventsscore, y = depression, col = group)
+                ) +
+  geom_point(alpha = .7, position = "jitter")+
+  geom_smooth(method = "lm", se = FALSE) 
+  
+
+#Adding labels and APA theme
+  plot +
+    labs(x = "Exposure to stressful life events",
+         y = "Depression score (DASS)",
+         col = "Condition") +
+     theme_apa(legend.pos = "right", 
+               legend.use.title = TRUE) 
+    
+
+```
+
+## Finishing session
+
+If you are running this on R Markdown you can now click on `Knit` to prepare your word document with all the prepared analyses.
+
+
+
+
+**[Go Back to the Tutorial Homepage](https://dcs-training.github.io/)**
